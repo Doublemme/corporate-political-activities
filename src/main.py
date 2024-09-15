@@ -5,10 +5,11 @@ import pandas as pd
 from utils.datasets_utils import prepare_pac_ds, prepare_scac_ds, prepare_lobbying_ds, apply_col_manipulation
 from utils.constants.datasets import MAIN_DATASET 
 
+YEARS = [2001,2002,2023]
 
 def main() -> DataFrame:
     main_df: DataFrame = dd.from_map(pd.read_excel, [MAIN_DATASET])
-
+    #TODO: Add the missing years in the main dataframe to have a more complete dataset (so like 20 rows for each organization)
     gen_pac_df: DataFrame = prepare_pac_ds()
     gen_scac_df: DataFrame = prepare_scac_ds()
     gen_lobbying_df: DataFrame = prepare_lobbying_ds()
