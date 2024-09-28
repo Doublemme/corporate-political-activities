@@ -1,5 +1,7 @@
 # Corporate Political Activities
 
+Script to combine data from datasets to retrieve data of corporate political activities
+
 ## Install
 
 Put the datasets inside the folder `data/datasets`
