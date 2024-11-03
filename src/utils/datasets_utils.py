@@ -89,5 +89,8 @@ def prepare_chairmen_df():
     view_df["Numero domanda"] = traits_df["RecipientFirstName"].apply(lambda x: get_traits_base_cols(x)[1], meta=("question", int))
     view_df["SCALE"] = traits_df["RecipientFirstName"].apply(lambda x: get_traits_base_cols(x)[2], meta=("scale", str))
 
-    view_df:DataFrame = view_df.merge(traits_scales_df, on=['Numero domanda','SCALE'], how="inner")   
+    view_df:DataFrame = view_df.merge(traits_scales_df, on=['Numero domanda','SCALE'], how="inner")
+    # TODO: Add average value sum for each question for each chairman and Calculate the REVERSE HEXACO
+    # TODO: Combine everything with the chairmen_df
+    # TODO: Get the sum of all subscale average grouped by scale
     print(view_df.compute())
