@@ -28,11 +28,22 @@ def apply_col_manipulation(row, col):
     
     return None
 
-def get_traits_base_cols(row):
-    if isinstance(row, str):
-        [scale, chairman,question] = row.split("_")
+def get_traits_base_cols(cell):
+    if isinstance(cell, str):
+        [scale, chairman,question] = cell.split("_")
         return [chairman,int(question),scale]
-    return row
+    return cell
+
+def get_avg_with_traits(row):
+    traits = get_traits_base_cols(row["RecipientFirstName"])
+    return pd.Series([*traits, row["AVERAGE"]], index=["id", "Numero domanda", "SCALE", "AVERAGE"])
+
+def reverse_hexaco_avg(row):
+    if isinstance(row["NOTE"], str) and row["NOTE"] == "REVERSE":
+        row["AVERAGE"] = 8.00 - float(row["AVERAGE"])
+        return row
+
+    return row    
 
 def prepare_pac_ds():
     pac_df: DataFrame = dd.from_map(pd.read_excel, [PAC_DATASET])
@@ -78,19 +89,42 @@ def prepare_chairmen_df():
 
     # Create in chairmen_df the columns required for the analysis
     # based on the traits_scales_df SCALE and SUBSCALE values
-    traits_scales_df = traits_scales_df.groupby(["SCALE", "SUBSCALE"], group_keys=True).mean(numeric_only=True).reset_index()
-    traits_scales_df = traits_scales_df.set_index("Numero domanda", sorted=True)
-    traits_cols = (traits_scales_df["SCALE"].astype(str) + "_" + traits_scales_df["SUBSCALE"].astype(str)).compute().tolist()
+    grouped_traits_scales_df = traits_scales_df.groupby(["SCALE", "SUBSCALE"]).mean(numeric_only=True).reset_index()
+    traits_cols:list[str] = (grouped_traits_scales_df["SCALE"].astype(str) + "_" + grouped_traits_scales_df["SUBSCALE"].astype(str)).compute().tolist()
     print(traits_cols)
 
     # Manipulate traits_df to get a view datframe to help with all the operations
     view_df: DataFrame = dd.from_pandas(pd.DataFrame())
-    view_df["id"] = traits_df["RecipientFirstName"].apply(lambda x: get_traits_base_cols(x)[0], meta=("id", str))
-    view_df["Numero domanda"] = traits_df["RecipientFirstName"].apply(lambda x: get_traits_base_cols(x)[1], meta=("question", int))
-    view_df["SCALE"] = traits_df["RecipientFirstName"].apply(lambda x: get_traits_base_cols(x)[2], meta=("scale", str))
-
-    view_df:DataFrame = view_df.merge(traits_scales_df, on=['Numero domanda','SCALE'], how="inner")
-    # TODO: Add average value sum for each question for each chairman and Calculate the REVERSE HEXACO
+    # Add average value sum for each question for each chairman and Calculate the REVERSE HEXACO
+    view_df: DataFrame = dd.from_pandas(pd.DataFrame())
+    result = traits_df.apply(get_avg_with_traits, axis=1, meta={"id": str, "Numero domanda": int, "SCALE": str, "AVERAGE": float})
+    view_df = view_df.assign(id=result["id"], Numero_domanda=result["Numero domanda"], SCALE=result["SCALE"], AVERAGE=result["AVERAGE"])
+    view_df = view_df.rename(columns={"Numero_domanda": "Numero domanda"})
+    filtered_traits_df:DataFrame = traits_scales_df[["Numero domanda", "SUBSCALE", "NOTE"]]
+    view_df = view_df.merge(filtered_traits_df, on="Numero domanda", how="left")
+    view_df = view_df.apply(reverse_hexaco_avg, axis=1, meta={"id": str, "Numero domanda": int, "SCALE": str, "AVERAGE": float, "SUBSCALE": str, "NOTE": object})
+    view_df.to_csv("out/view.csv",  mode="w", single_file=True, index=False)
+    view_df = view_df.compute()
+    view_df = view_df.drop(columns=["NOTE"], axis=1)
     # TODO: Combine everything with the chairmen_df
     # TODO: Get the sum of all subscale average grouped by scale
-    print(view_df.compute())
+    sums_df: DataFrame = dd.from_pandas(pd.DataFrame())
+    summed_avg_df = view_df.groupby(["id", "Numero domanda", "SCALE", "SUBSCALE"]).sum().reset_index()
+
+    summed_avg_df['column_name'] = summed_avg_df['SCALE'] + '_' + summed_avg_df['SUBSCALE']
+
+    # Pivot the dataframe to get the desired structure: one row per 'id' with summed values for each scale_subscale combination
+    pivot_df = summed_avg_df.pivot_table(
+        index='id', 
+        columns='column_name', 
+        values='AVERAGE', 
+        aggfunc='sum', 
+        fill_value=0
+    )
+
+    # Reset the index to make 'id' a column (optional)
+    pivot_df.reset_index(inplace=True)
+
+    # Display the output
+    print(pivot_df)
+    pivot_df.to_csv("out/chairmen_traits_dataset.csv", mode="w", index=False)
