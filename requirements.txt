@@ -1,2 +1,3 @@
 dask[complete]
 openpyxl
+pingouin
