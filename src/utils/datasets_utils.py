@@ -31,7 +31,7 @@ def apply_col_manipulation(row, col):
 def get_traits_base_cols(cell):
     if isinstance(cell, str):
         [scale, chairman,question] = cell.split("_")
-        return [chairman,int(question),scale]
+        return [chairman.strip(),int(question),scale]
     return cell
 
 def get_avg_with_traits(row):
@@ -84,14 +84,9 @@ def prepare_scac_ds():
 
 def prepare_chairmen_df():
     charimen_df: DataFrame = dd.from_map(pd.read_excel, [CHAIRMEN_VIDEOMETRICS])
+    charimen_df = charimen_df.compute()
     traits_df: DataFrame = dd.from_map(pd.read_excel, [CHAIRMEN_VIDEOMETRICS], args=[3])
     traits_scales_df: DataFrame = dd.from_map(pd.read_excel, [CHAIRMEN_VIDEOMETRICS], args=["Scales"])
-
-    # Create in chairmen_df the columns required for the analysis
-    # based on the traits_scales_df SCALE and SUBSCALE values
-    grouped_traits_scales_df = traits_scales_df.groupby(["SCALE", "SUBSCALE"]).mean(numeric_only=True).reset_index()
-    traits_cols:list[str] = (grouped_traits_scales_df["SCALE"].astype(str) + "_" + grouped_traits_scales_df["SUBSCALE"].astype(str)).compute().tolist()
-    print(traits_cols)
 
     # Manipulate traits_df to get a view datframe to help with all the operations
     view_df: DataFrame = dd.from_pandas(pd.DataFrame())
@@ -103,18 +98,15 @@ def prepare_chairmen_df():
     filtered_traits_df:DataFrame = traits_scales_df[["Numero domanda", "SUBSCALE", "NOTE"]]
     view_df = view_df.merge(filtered_traits_df, on="Numero domanda", how="left")
     view_df = view_df.apply(reverse_hexaco_avg, axis=1, meta={"id": str, "Numero domanda": int, "SCALE": str, "AVERAGE": float, "SUBSCALE": str, "NOTE": object})
-    view_df.to_csv("out/view.csv",  mode="w", single_file=True, index=False)
     view_df = view_df.compute()
     view_df = view_df.drop(columns=["NOTE"], axis=1)
-    # TODO: Combine everything with the chairmen_df
-    # TODO: Get the sum of all subscale average grouped by scale
-    sums_df: DataFrame = dd.from_pandas(pd.DataFrame())
-    summed_avg_df = view_df.groupby(["id", "Numero domanda", "SCALE", "SUBSCALE"]).sum().reset_index()
+
+    summed_avg_df: DataFrame = view_df.groupby(["id", "Numero domanda", "SCALE", "SUBSCALE"]).sum().reset_index()
 
     summed_avg_df['column_name'] = summed_avg_df['SCALE'] + '_' + summed_avg_df['SUBSCALE']
 
     # Pivot the dataframe to get the desired structure: one row per 'id' with summed values for each scale_subscale combination
-    pivot_df = summed_avg_df.pivot_table(
+    pivot_df: DataFrame = summed_avg_df.pivot_table(
         index='id', 
         columns='column_name', 
         values='AVERAGE', 
@@ -122,9 +114,18 @@ def prepare_chairmen_df():
         fill_value=0
     )
 
-    # Reset the index to make 'id' a column (optional)
-    pivot_df.reset_index(inplace=True)
+    for scale in summed_avg_df['SCALE'].unique():
+        # Find columns for the current SCALE
+        scale_columns = [col for col in pivot_df.columns if col.startswith(scale + '_')]
+        # Sum across these columns and add a new column for the SCALE total
+        pivot_df[scale + '_total'] = pivot_df[scale_columns].sum(axis=1)
 
-    # Display the output
-    print(pivot_df)
+    # Reset index to make 'id' a column
+    pivot_df.reset_index(inplace=True)
+    pivot_df = pivot_df.merge(charimen_df, left_on="id", right_on="CODE", how="left").drop(columns=['CODE'])
+    # Move 'chairman' to index 1
+    cols = list(pivot_df.columns)
+    cols.insert(1, cols.pop(cols.index('CHAIRMAN')))  # Move 'chairman' to index 1
+    pivot_df = pivot_df[cols]
+
     pivot_df.to_csv("out/chairmen_traits_dataset.csv", mode="w", index=False)
