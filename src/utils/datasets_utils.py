@@ -88,20 +88,23 @@ def prepare_chairmen_df():
     traits_df: DataFrame = dd.from_map(pd.read_excel, [CHAIRMEN_VIDEOMETRICS], args=[3])
     traits_scales_df: DataFrame = dd.from_map(pd.read_excel, [CHAIRMEN_VIDEOMETRICS], args=["Scales"])
 
-    # Manipulate traits_df to get a view datframe to help with all the operations
-    view_df: DataFrame = dd.from_pandas(pd.DataFrame())
-    # Add average value sum for each question for each chairman and Calculate the REVERSE HEXACO
-    view_df: DataFrame = dd.from_pandas(pd.DataFrame())
+    # Filter Dataframe and remove the current AVG, empty column and Alessia
+    view_df:DataFrame = traits_df.drop(columns=["Unnamed: 5", "AVERAGE", "Alessia"], axis=1)
+
+    # Calculate the new AVG with the raters that have best "armony"
+    view_df = view_df.assign(AVERAGE=view_df.mean(numeric_only=True, axis=1))
+    print(view_df.compute())
     result = traits_df.apply(get_avg_with_traits, axis=1, meta={"id": str, "Numero domanda": int, "SCALE": str, "AVERAGE": float})
     view_df = view_df.assign(id=result["id"], Numero_domanda=result["Numero domanda"], SCALE=result["SCALE"], AVERAGE=result["AVERAGE"])
     view_df = view_df.rename(columns={"Numero_domanda": "Numero domanda"})
     filtered_traits_df:DataFrame = traits_scales_df[["Numero domanda", "SUBSCALE", "NOTE"]]
+    
     view_df = view_df.merge(filtered_traits_df, on="Numero domanda", how="left")
     view_df = view_df.apply(reverse_hexaco_avg, axis=1, meta={"id": str, "Numero domanda": int, "SCALE": str, "AVERAGE": float, "SUBSCALE": str, "NOTE": object})
     view_df = view_df.compute()
     view_df = view_df.drop(columns=["NOTE"], axis=1)
 
-    summed_avg_df: DataFrame = view_df.groupby(["id", "Numero domanda", "SCALE", "SUBSCALE"]).sum().reset_index()
+    summed_avg_df: DataFrame = view_df.groupby(["id", "Numero domanda", "SCALE", "SUBSCALE"]).mean(numeric_only=True).reset_index()
 
     summed_avg_df['column_name'] = summed_avg_df['SCALE'] + '_' + summed_avg_df['SUBSCALE']
 
@@ -110,18 +113,30 @@ def prepare_chairmen_df():
         index='id', 
         columns='column_name', 
         values='AVERAGE', 
-        aggfunc='sum', 
+        aggfunc='mean', 
         fill_value=0
     )
-
-    for scale in summed_avg_df['SCALE'].unique():
-        # Find columns for the current SCALE
-        scale_columns = [col for col in pivot_df.columns if col.startswith(scale + '_')]
-        # Sum across these columns and add a new column for the SCALE total
-        pivot_df[scale + '_total'] = pivot_df[scale_columns].sum(axis=1)
-
+    
     # Reset index to make 'id' a column
     pivot_df.reset_index(inplace=True)
+
+    for scale in summed_avg_df["SCALE"].unique():
+        filtered_df: DataFrame = summed_avg_df[summed_avg_df["SCALE"] == scale]
+        grouped_df = (
+            filtered_df
+            .groupby(["id", "SCALE"])["AVERAGE"]
+            .mean(numeric_only=True)
+            .reset_index()
+        )
+        
+        # Create a mapping of id to the average values
+        id_average_map = grouped_df.set_index("id")["AVERAGE"]
+
+        # Add the new column to pivot_df
+        # The new column is named after the scale, e.g., "MPS"
+        pivot_df[scale] = pivot_df["id"].map(id_average_map)
+
+
     pivot_df = pivot_df.merge(charimen_df, left_on="id", right_on="CODE", how="left").drop(columns=['CODE'])
     # Move 'chairman' to index 1
     cols = list(pivot_df.columns)
